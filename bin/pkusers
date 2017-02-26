@@ -1,0 +1,389 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# PyKota : Print Quotas for CUPS
+#
+# (c) 2003-2013 Jerome Alet <alet@librelogiciel.com>
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id: pkusers 3561 2013-01-04 22:34:24Z jerome $
+#
+#
+
+"""A users and groups manager for PyKota."""
+
+import sys
+import os
+import pwd
+import grp
+
+import pykota.appinit
+from pykota.utils import run
+from pykota.commandline import PyKotaOptionParser
+from pykota.errors import PyKotaCommandLineError
+from pykota.tool import PyKotaTool
+from pykota.storage import StorageUser, StorageGroup
+from pykota.progressbar import Percent
+
+class PKUsers(PyKotaTool) :
+    """A class for a users and users groups manager."""
+    def modifyEntry(self, entry, groups, limitby, description, overcharge=None, balance=None, balancevalue=None, comment=None, email=None) :
+        """Modifies an entry."""
+        if description is not None : # NB : "" is allowed !
+            entry.setDescription(description)
+        if limitby :
+            entry.setLimitBy(limitby)
+        if not groups :
+            if email is not None :      # we allow "" to empty the field
+                if email.startswith("@") :
+                    email = "%s%s" % (entry.Name, email)
+                if email and email.count('@') != 1 :
+                    raise PyKotaCommandLineError, _("Invalid email address %s") % email
+                entry.setEmail(email)
+            if overcharge is not None : # NB : 0 is allowed !
+                entry.setOverChargeFactor(overcharge)
+            if balance :
+                if balance.startswith("+") or balance.startswith("-") :
+                    newbalance = float(entry.AccountBalance or 0.0) + balancevalue
+                    newlifetimepaid = float(entry.LifeTimePaid or 0.0) + balancevalue
+                    entry.setAccountBalance(newbalance, newlifetimepaid, comment)
+                else :
+                    diff = balancevalue - float(entry.AccountBalance or 0.0)
+                    newlifetimepaid = float(entry.LifeTimePaid or 0.0) + diff
+                    entry.setAccountBalance(balancevalue, newlifetimepaid, comment)
+
+    def manageUsersGroups(self, ugroups, user, remove) :
+        """Manage user group membership."""
+        for ugroup in ugroups :
+            if remove :
+                ugroup.delUserFromGroup(user)
+            else :
+                ugroup.addUserToGroup(user)
+
+    def main(self, names, options) :
+        """Manage users or groups."""
+        islist = (options.action == "list")
+        isadd = (options.action == "add")
+        isdelete = (options.action == "delete")
+
+        if not islist :
+            self.adminOnly()
+
+        names = self.sanitizeNames(names, options.groups)
+        if not names :
+            if isdelete or isadd :
+                raise PyKotaCommandLineError, _("You must specify users or groups names on the command line.")
+            names = [u"*"]
+
+        if options.remove and not options.ingroups :
+            raise PyKotaCommandLineError, _("You must specify users groups names on the command line.")
+        elif (((islist or isdelete) and (options.limitby  \
+                                      or options.balance \
+                                      or options.email \
+                                      or options.remove \
+                                      or options.overcharge \
+                                      or options.ingroups \
+                                      or options.description \
+                                      or options.skipexisting \
+                                      or options.comment))) \
+             or (options.groups and (options.ingroups \
+                                  or options.balance \
+                                  or options.email \
+                                  or options.remove \
+                                  or options.overcharge \
+                                  or options.comment)) :
+            raise PyKotaCommandLineError, _("Incompatible command line options. Please look at the online help or manual page.")
+
+        suffix = (options.groups and "Group") or "User"
+
+        if not islist :
+            percent = Percent(self)
+
+        if not isadd :
+            if not islist :
+                percent.display("%s..." % _("Extracting datas"))
+            entries = getattr(self.storage, "getMatching%ss" % suffix)(",".join(names))
+            if not entries :
+                if not islist :
+                    percent.display("\n")
+                raise PyKotaCommandLineError, _("There's no %s matching %s") \
+                    % (_(suffix.lower()), " ".join(names))
+            if not islist :
+                percent.setSize(len(entries))
+
+        if islist :
+            if suffix == "User" :
+                maildomain = self.config.getMailDomain()
+                smtpserver = self.config.getSMTPServer()
+                for entry in entries :
+                    email = entry.Email
+                    if not email :
+                        if maildomain :
+                            email = "%s@%s" % (entry.Name, maildomain)
+                        elif smtpserver :
+                            email = "%s@%s" % (entry.Name, smtpserver)
+                        else :
+                            email = "%s@%s" % (entry.Name, "localhost")
+                    msg = "%s - <%s>" % (entry.Name, email)
+                    if entry.Description :
+                        msg += " - %s" % entry.Description
+                    self.display("%s\n" % msg)
+                    self.display("    %s\n" % (_("Limited by : %s") % entry.LimitBy))
+                    self.display("    %s\n" % (_("Account balance : %.2f") % (entry.AccountBalance or 0)))
+                    self.display("    %s\n" % (_("Total paid so far : %.2f") % (entry.LifeTimePaid or 0)))
+                    self.display("    %s\n" % (_("Overcharging factor : %.2f") % entry.OverCharge))
+                    self.display("\n")
+            else :
+                for entry in entries :
+                    msg = "%s" % entry.Name
+                    if entry.Description :
+                        msg += " - %s" % entry.Description
+                    self.display("%s\n" % msg)
+                    self.display("    %s\n" % (_("Limited by : %s") % entry.LimitBy))
+                    self.display("    %s\n" % (_("Group balance : %.2f") % (entry.AccountBalance or 0)))
+                    self.display("    %s\n" % (_("Total paid so far : %.2f") % (entry.LifeTimePaid or 0)))
+                    self.display("\n")
+        elif isdelete :
+            percent.display("\n%s..." % _("Deletion"))
+            getattr(self.storage, "deleteMany%ss" % suffix)(entries)
+            percent.display("\n")
+        else :
+            limitby = options.limitby
+            if limitby :
+                limitby = limitby.strip().lower()
+            if limitby :
+                if limitby not in ('quota',
+                                   'balance',
+                                   'noquota',
+                                   'noprint',
+                                   'nochange') :
+                    raise PyKotaCommandLineError, _("Invalid limitby value %s") \
+                        % options.limitby
+                if (limitby in ('nochange', 'noprint')) and options.groups :
+                    raise PyKotaCommandLineError, _("Invalid limitby value %s") \
+                        % options.limitby
+
+            balance = options.balance
+            if balance :
+                balance = balance.strip()
+                try :
+                    balancevalue = float(balance)
+                except ValueError :
+                    raise PyKotaCommandLineError, _("Invalid balance value %s") \
+                        % options.balance
+            else :
+                balancevalue = None
+
+            if options.ingroups :
+                usersgroups = self.storage.getMatchingGroups(options.ingroups)
+                if not usersgroups :
+                    raise PyKotaCommandLineError, _("There's no users group matching %s") \
+                        % " ".join(options.ingroups.split(','))
+            else :
+                usersgroups = []
+
+            if options.description :
+                options.description = options.description.strip()
+
+            if options.comment :
+                options.comment = options.comment.strip()
+
+            if options.email :
+                options.email = options.email.strip()
+
+            self.storage.beginTransaction()
+            try :
+                if isadd :
+                    rejectunknown = self.config.getRejectUnknown()
+                    percent.display("%s...\n" % _("Creation"))
+                    percent.setSize(len(names))
+                    for ename in names :
+                        useremail = None
+                        if not options.groups :
+                            splitname = ename.split('/', 1)     # username/email
+                            if len(splitname) == 1 :
+                                splitname.append("")
+                            (ename, useremail) = splitname
+                        if self.isValidName(ename) :
+                            reject = 0
+                            if rejectunknown :
+                                if options.groups :
+                                    try :
+                                        grp.getgrnam(ename)
+                                    except KeyError :
+                                        self.printInfo(_("Unknown group %s") % ename, "error")
+                                        reject = 1
+                                else :
+                                    try :
+                                        pwd.getpwnam(ename)
+                                    except KeyError :
+                                        self.printInfo(_("Unknown user %s") % ename, "error")
+                                        reject = 1
+                            if not reject :
+                                entry = globals()["Storage%s" % suffix](self.storage, ename)
+                                if options.groups :
+                                    self.modifyEntry(entry,
+                                                     options.groups,
+                                                     limitby,
+                                                     options.description)
+                                else :
+                                    self.modifyEntry(entry,
+                                                     options.groups,
+                                                     limitby,
+                                                     options.description,
+                                                     options.overcharge,
+                                                     balance,
+                                                     balancevalue,
+                                                     options.comment,
+                                                     useremail or options.email)
+                                oldentry = getattr(self.storage, "add%s" % suffix)(entry)
+                                if oldentry is not None :
+                                    if options.skipexisting :
+                                        self.logdebug(_("%s %s already exists, skipping.") \
+                                                          % (_(suffix), ename))
+                                    else :
+                                        self.logdebug(_("%s %s already exists, will be modified.") \
+                                                          % (_(suffix), ename))
+                                        if options.groups :
+                                            self.modifyEntry(oldentry,
+                                                             options.groups,
+                                                             limitby,
+                                                             options.description)
+                                        else :
+                                            self.modifyEntry(oldentry,
+                                                             options.groups,
+                                                             limitby,
+                                                             options.description,
+                                                             options.overcharge,
+                                                             balance,
+                                                             balancevalue,
+                                                             options.comment,
+                                                             useremail or options.email)
+                                        oldentry.save()
+                                        if not options.groups :
+                                            self.manageUsersGroups(usersgroups,
+                                                                   oldentry,
+                                                                   options.remove)
+                                elif usersgroups and not options.groups :
+                                    self.manageUsersGroups(usersgroups, \
+                                                           self.storage.getUser(ename), \
+                                                           options.remove)
+                        else :
+                            raise PyKotaCommandLineError, _("Invalid name %s") % ename
+                        percent.oneMore()
+                else :
+                    percent.display("\n%s...\n" % _("Modification"))
+                    for entry in entries :
+                        if options.groups :
+                            self.modifyEntry(entry,
+                                             options.groups,
+                                             limitby,
+                                             options.description)
+                        else :
+                            self.modifyEntry(entry,
+                                             options.groups,
+                                             limitby,
+                                             options.description,
+                                             options.overcharge,
+                                             balance,
+                                             balancevalue,
+                                             options.comment,
+                                             options.email)
+                            self.manageUsersGroups(usersgroups,
+                                                   entry,
+                                                   options.remove)
+                        entry.save()
+                        percent.oneMore()
+            except :
+                self.storage.rollbackTransaction()
+                raise
+            else :
+                self.storage.commitTransaction()
+
+        if not islist :
+            percent.done()
+
+if __name__ == "__main__" :
+    parser = PyKotaOptionParser(description=_("Manages PyKota users or users groups."),
+                                usage="pkusers [options] [usernames|groupnames]")
+    parser.add_option("-a", "--add",
+                            action="store_const",
+                            const="add",
+                            dest="action",
+                            help=_("Add new, or modify existing, users or groups."))
+    parser.add_option("-b", "--balance",
+                            dest="balance",
+                            help=_("Set an user's account balance. The value can also be increased or decreased when the value is prefixed with '+' or '-'. Users groups don't have a real account balance, instead the sum of their members' account balances is used."))
+    parser.add_option("-C", "--comment",
+                            dest="comment",
+                            default="",
+                            help=_("Associate a textual comment with a change in an user's account balance. Only meaningful when --balance is also used."))
+    parser.add_option("-d", "--delete",
+                            action="store_const",
+                            const="delete",
+                            dest="action",
+                            help=_("Delete the specified users or groups. Also purge the print quota entries and printing history matching the specified users or groups."))
+    parser.add_option("-D", "--description",
+                            dest="description",
+                            help=_("Set a textual description for the specified users or groups."))
+    parser.add_option("-e", "--email",
+                            dest="email",
+                            help=_("Set an user's email address. If this parameter begins with '@' then the username is prepended to this parameter to form a valid email address."))
+    parser.add_option("-g", "--groups",
+                            action="store_true",
+                            dest="groups",
+                            help=_("Manage users groups instead of users."))
+    parser.add_option("-i", "--ingroups",
+                            dest="ingroups",
+                            help=_("Put the specified users into the specified groups. When combined with the --remove option, users are removed from the specified groups instead."))
+    parser.add_option("-l", "--limitby",
+                            dest="limitby",
+                            help=_("Set the limiting factor for the specified users or groups. Can be any of 'quota' (limit by number of pages per printer), 'balance' (limit by number of credits), 'noquota' (no limit but accounting done), 'nochange' (no limit and no accounting), or 'noprint' (printing is denied). The two latter ones are not supported for groups."))
+    parser.add_option("-L", "--list",
+                            action="store_const",
+                            const="list",
+                            dest="action",
+                            help=_("Display detailed informations about the specified users or groups."))
+    parser.add_option("-o", "--overcharge",
+                            type="float",
+                            dest="overcharge",
+                            help=_("Set the overcharging factor applied to the specified users when computing the cost of a print job. Any floating point value can be used, allowing you to express your creativity..."))
+    parser.add_option("-r", "--remove",
+                            action="store_true",
+                            dest="remove",
+                            help=_("When combined with the --ingroups option, remove users from the specified users groups."))
+    parser.add_option("-s", "--skipexisting",
+                            action="store_true",
+                            dest="skipexisting",
+                            help=_("If --add is used, ensure that existing users or groups won't be modified."))
+
+    parser.add_example("--add john paul george ringo/ringo@example.com",
+                       _("Would make users 'john', 'paul', 'george' and 'ringo' be known to PyKota. User 'ringo''s email address would be set to 'ringo@example.com'."))
+    parser.add_example("--add --groups coders it",
+                       _("Would create two users groups named 'coders' and 'it'."))
+    parser.add_example("--add --ingroups coders,it jerome",
+                       _("Would add user 'jerome' and put him into the 'coders' and 'it' groups. Both groups would have to be existing."))
+    parser.add_example("--limitby balance --balance 10.0 john",
+                       _("Would give 10.0 credits to 'john' and make his printing be limited by his account balance."))
+    parser.add_example('--balance +10.0 --comment "He paid with his blood." jerome',
+                       _("Would add 10.0 credits to 'jerome''s account and register a comment associated with his payment."))
+    parser.add_example('--delete "jer*" "rach*"',
+                       _("Would delete all user accounts whose names begin with either 'jer' or 'rach'."))
+    parser.add_example("--overcharge -1.50 theboss",
+                       _("Would make the boss earn money whenever he prints."))
+    parser.add_example("--email @example.com",
+                       _("Would set the email address for each existing user to username@example.com"))
+    parser.add_example("--list",
+                       _("Would list all users."))
+    run(parser, PKUsers)

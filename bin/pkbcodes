@@ -1,0 +1,171 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# PyKota : Print Quotas for CUPS
+#
+# (c) 2003-2013 Jerome Alet <alet@librelogiciel.com>
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id: pkbcodes 3561 2013-01-04 22:34:24Z jerome $
+#
+#
+
+"""A billing codes manager for PyKota."""
+
+import os
+import sys
+import pwd
+
+import pykota.appinit
+from pykota.utils import run
+from pykota.commandline import PyKotaOptionParser
+from pykota.errors import PyKotaCommandLineError
+from pykota.tool import PyKotaTool
+from pykota.storage import StorageBillingCode
+from pykota.progressbar import Percent
+
+class PKBcodes(PyKotaTool) :
+    """A class for a billing codes manager."""
+    def modifyBillingCode(self, billingcode, reset, description) :
+        """Modifies a billing code."""
+        if reset :
+            billingcode.reset()
+        if description is not None : # NB : "" is allowed !
+            billingcode.setDescription(description)
+
+    def main(self, names, options) :
+        """Manage billing codes."""
+        islist = (options.action == "list")
+        isadd = (options.action == "add")
+        isdelete = (options.action == "delete")
+
+        if not islist :
+            self.adminOnly()
+
+        if not names :
+            if isdelete or isadd :
+                raise PyKotaCommandLineError, _("You must specify billing codes on the command line.")
+            names = [u"*"]
+
+        if not islist :
+            percent = Percent(self)
+
+        if not isadd :
+            if not islist :
+                percent.display("%s..." % _("Extracting datas"))
+            if not names :
+                names = ["*"]
+            billingcodes = self.storage.getMatchingBillingCodes(",".join(names))
+            if not billingcodes :
+                if not islist :
+                    percent.display("\n")
+                raise PyKotaCommandLineError, _("There's no billingcode matching %s") % " ".join(names)
+            if not islist :
+                percent.setSize(len(billingcodes))
+
+        if islist :
+            for billingcode in billingcodes :
+                self.display("%s [%s] %s %s %s %.2f %s\n" % \
+                      (billingcode.BillingCode, billingcode.Description, \
+                       billingcode.PageCounter, \
+                       _("pages"), \
+                       _("and"), \
+                       billingcode.Balance, \
+                       _("credits")))
+        elif isdelete :
+            percent.display("\n%s..." % _("Deletion"))
+            self.storage.deleteManyBillingCodes(billingcodes)
+            percent.display("\n")
+        else :
+            description = options.description
+            if description :
+                description = description.strip()
+
+            self.storage.beginTransaction()
+            try :
+                if isadd :
+                    percent.display("%s...\n" % _("Creation"))
+                    percent.setSize(len(names))
+                    for bname in names :
+                        billingcode = StorageBillingCode(self.storage, bname)
+                        self.modifyBillingCode(billingcode,
+                                               options.reset,
+                                               description)
+                        oldbillingcode = self.storage.addBillingCode(billingcode)
+                        if oldbillingcode is not None :
+                            if options.skipexisting :
+                                self.logdebug(_("Billing code '%(bname)s' already exists, skipping.") % locals())
+                            else :
+                                self.logdebug(_("Billing code '%(bname)s' already exists, will be modified.") % locals())
+                                self.modifyBillingCode(oldbillingcode,
+                                                       options.reset,
+                                                       description)
+                                oldbillingcode.save()
+                        percent.oneMore()
+                else :
+                    percent.display("\n%s...\n" % _("Modification"))
+                    for billingcode in billingcodes :
+                        self.modifyBillingCode(billingcode,
+                                               options.reset,
+                                               description)
+                        billingcode.save()
+                        percent.oneMore()
+            except :
+                self.storage.rollbackTransaction()
+                raise
+            else :
+                self.storage.commitTransaction()
+
+        if not islist :
+            percent.done()
+
+if __name__ == "__main__" :
+    parser = PyKotaOptionParser(description=_("A billing codes manager for PyKota."),
+                                usage="pkbcodes [options] code1 code2 ... codeN")
+    parser.add_option("-a", "--add",
+                            action="store_const",
+                            const="add",
+                            dest="action",
+                            help=_("Add new, or modify existing, billing codes."))
+    parser.add_option("-d", "--delete",
+                            action="store_const",
+                            const="delete",
+                            dest="action",
+                            help=_("Deletes billing codes. Matching entries in the printing history are not deleted, on purpose."))
+    parser.add_option("-D", "--description",
+                            dest="description",
+                            help=_("Set a textual description for the specified billing codes."))
+    parser.add_option("-l", "--list",
+                            action="store_const",
+                            const="list",
+                            dest="action",
+                            help=_("Display detailed informations about the specified billing codes."))
+    parser.add_option("-r", "--reset",
+                            action="store_true",
+                            dest="reset",
+                            help=_("Reset the page count and amount spent for the specified billing codes."))
+    parser.add_option("-s", "--skipexisting",
+                            action="store_true",
+                            dest="skipexisting",
+                            help=_("If --add is used, ensure that existing billing codes won't be modified."))
+
+    parser.add_example('-D "Financial Department" financial',
+                       _("Would create a billing code labelled 'financial' with the specified textual description."))
+    parser.add_example('--delete "fin*"',
+                       _("Would delete all billing codes which label begins with 'fin'. Matching jobs in the printing history wouldn't be deleted though."))
+    parser.add_example("--list",
+                       _("Would display details about all existing billing codes."))
+
+    (options, arguments) = parser.parse_args()
+    run(parser, PKBcodes)

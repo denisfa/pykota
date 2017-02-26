@@ -1,0 +1,418 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# PyKota : Print Quotas for CUPS
+#
+# (c) 2003-2013 Jerome Alet <alet@librelogiciel.com>
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id: pkturnkey 3561 2013-01-04 22:34:24Z jerome $
+#
+#
+
+"""A tool that can be used to fill PyKota's database from system accounts, and detect the best accouting settings for the existing printers."""
+
+import sys
+import os
+import pwd
+import grp
+import socket
+import signal
+
+from pkipplib import pkipplib
+
+import pykota.appinit
+from pykota.utils import run, logerr
+from pykota.commandline import PyKotaOptionParser
+from pykota.errors import PyKotaToolError, PyKotaCommandLineError
+from pykota.tool import Tool
+
+class PKTurnKey(Tool) :
+    """A class for an initialization tool."""
+    def listPrinters(self, namestomatch) :
+        """Returns a list of tuples (queuename, deviceuri) for all existing print queues."""
+        self.printInfo("Extracting all print queues.")
+        printers = []
+        server = pkipplib.CUPS()
+        for queuename in server.getPrinters() :
+            req = server.newRequest(pkipplib.IPP_GET_PRINTER_ATTRIBUTES)
+            req.operation["printer-uri"] = ("uri", server.identifierToURI("printers", queuename))
+            req.operation["requested-attributes"] = ("keyword", "device-uri")
+            result = server.doRequest(req)
+            try :
+                deviceuri = result.printer["device-uri"][0][1]
+            except (AttributeError, IndexError, KeyError) :
+                deviceuri = None
+            if deviceuri is not None :
+                if self.matchString(queuename, namestomatch) :
+                    printers.append((queuename, deviceuri))
+                else :
+                    self.printInfo("Print queue %s skipped." % queuename)
+        return printers
+
+    def listUsers(self, uidmin, uidmax) :
+        """Returns a list of users whose uids are between uidmin and uidmax."""
+        self.printInfo("Extracting all users whose uid is between %s and %s." % (uidmin, uidmax))
+        return [(entry.pw_name, entry.pw_gid) for entry in pwd.getpwall() if uidmin <= entry.pw_uid <= uidmax]
+
+    def listGroups(self, gidmin, gidmax, users) :
+        """Returns a list of groups whose gids are between gidmin and gidmax."""
+        self.printInfo("Extracting all groups whose gid is between %s and %s." % (gidmin, gidmax))
+        groups = [(entry.gr_name, entry.gr_gid, entry.gr_mem) for entry in grp.getgrall() if gidmin <= entry.gr_gid <= gidmax]
+        gidusers = {}
+        usersgid = {}
+        for u in users :
+            gidusers.setdefault(u[1], []).append(u[0])
+            usersgid.setdefault(u[0], []).append(u[1])
+
+        membership = {}
+        for g in range(len(groups)) :
+            (gname, gid, members) = groups[g]
+            newmembers = {}
+            for m in members :
+                newmembers[m] = m
+            try :
+                usernames = gidusers[gid]
+            except KeyError :
+                pass
+            else :
+                for username in usernames :
+                    if not newmembers.has_key(username) :
+                        newmembers[username] = username
+            for member in newmembers.keys() :
+                if not usersgid.has_key(member) :
+                    del newmembers[member]
+            membership[gname] = newmembers.keys()
+        return membership
+
+    def runCommand(self, command, dryrun) :
+        """Launches an external command."""
+        self.printInfo("%s" % command)
+        if not dryrun :
+            os.system(command)
+
+    def createPrinters(self, printers, dryrun=0) :
+        """Creates all printers in PyKota's database."""
+        if printers :
+            args = open("/tmp/pkprinters.args", "w")
+            args.write('--add\n--cups\n--skipexisting\n--description\n"printer created from pkturnkey"\n')
+            args.write("%s\n" % "\n".join(['"%s"' % p[0] for p in printers]))
+            args.close()
+            self.runCommand("pkprinters --arguments /tmp/pkprinters.args", dryrun)
+
+    def createUsers(self, users, printers, dryrun=0) :
+        """Creates all users in PyKota's database."""
+        if users :
+            args = open("/tmp/pkusers.users.args", "w")
+            args.write('--add\n--skipexisting\n--description\n"user created from pkturnkey"\n--limitby\nnoquota\n')
+            args.write("%s\n" % "\n".join(['"%s"' % u for u in users]))
+            args.close()
+            self.runCommand("pkusers --arguments /tmp/pkusers.users.args", dryrun)
+
+            printersnames = [p[0] for p in printers]
+            args = open("/tmp/edpykota.users.args", "w")
+            args.write('--add\n--skipexisting\n--noquota\n--printer\n')
+            args.write("%s\n" % ",".join(['"%s"' % p for p in printersnames]))
+            args.write("%s\n" % "\n".join(['"%s"' % u for u in users]))
+            args.close()
+            self.runCommand("edpykota --arguments /tmp/edpykota.users.args", dryrun)
+
+    def createGroups(self, groups, printers, dryrun=0) :
+        """Creates all groups in PyKota's database."""
+        if groups :
+            args = open("/tmp/pkusers.groups.args", "w")
+            args.write('--groups\n--add\n--skipexisting\n--description\n"group created from pkturnkey"\n--limitby\nnoquota\n')
+            args.write("%s\n" % "\n".join(['"%s"' % g for g in groups]))
+            args.close()
+            self.runCommand("pkusers --arguments /tmp/pkusers.groups.args", dryrun)
+
+            printersnames = [p[0] for p in printers]
+            args = open("/tmp/edpykota.groups.args", "w")
+            args.write('--groups\n--add\n--skipexisting\n--noquota\n--printer\n')
+            args.write("%s\n" % ",".join(['"%s"' % p for p in printersnames]))
+            args.write("%s\n" % "\n".join(['"%s"' % g for g in groups]))
+            args.close()
+            self.runCommand("edpykota --arguments /tmp/edpykota.groups.args", dryrun)
+
+            revmembership = {}
+            for (groupname, usernames) in groups.items() :
+                for username in usernames :
+                    revmembership.setdefault(username, []).append(groupname)
+            commands = []
+            for (username, groupnames) in revmembership.items() :
+                commands.append('pkusers --ingroups %s "%s"' \
+                    % (",".join(['"%s"' % g for g in groupnames]), username))
+            for command in commands :
+                self.runCommand(command, dryrun)
+
+    def supportsSNMP(self, hostname, community) :
+        """Returns 1 if the printer accepts SNMP queries, else 0."""
+        pageCounterOID = "1.3.6.1.2.1.43.10.2.1.4.1.1"  # SNMPv2-SMI::mib-2.43.10.2.1.4.1.1
+        try :
+            from pysnmp.entity.rfc3413.oneliner import cmdgen
+        except ImportError :
+            logerr("pysnmp doesn't seem to be installed. PyKota needs pysnmp v4.x, otherwise SNMP checks will be ignored !\n")
+            return False
+        try :
+            errorIndication, errorStatus, errorIndex, varBinds = \
+                cmdgen.CommandGenerator().getCmd(cmdgen.CommunityData("pykota", community, 0), \
+                                                     cmdgen.UdpTransportTarget((hostname, 161)), \
+                                                     tuple([int(i) for i in pageCounterOID.split('.')]))
+            if errorIndication :
+                raise "No SNMP !"
+            elif errorStatus :
+                raise "No SNMP !"
+            else :
+                self.SNMPOK = True
+        except :
+            self.SNMPOK = False
+        return self.SNMPOK
+
+    def supportsPJL(self, hostname, port) :
+        """Returns 1 if the printer accepts PJL queries over TCP, else 0."""
+        def alarmHandler(signum, frame) :
+            raise "Timeout !"
+
+        pjlsupport = False
+        signal.signal(signal.SIGALRM, alarmHandler)
+        signal.alarm(2) # wait at most 2 seconds
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try :
+            s.connect((hostname, port))
+            s.send("\033%-12345X@PJL INFO STATUS\r\n\033%-12345X")
+            answer = s.recv(1024)
+            if not answer.startswith("@PJL") :
+                raise "No PJL !"
+        except :
+            pass
+        else :
+            pjlsupport = True
+        s.close()
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, signal.SIG_IGN)
+        return pjlsupport
+
+    def hintConfig(self, printers) :
+        """Gives some hints about what to put into pykota.conf"""
+        if not printers :
+            return
+        sys.stderr.flush() # ensure outputs don't mix
+        self.display("\n--- CUT ---\n")
+        self.display("# Here are some lines that we suggest you add at the end\n")
+        self.display("# of the pykota.conf file. These lines gives possible\n")
+        self.display("# values for the way print jobs' size will be computed.\n")
+        self.display("# NB : it is possible that a manual configuration gives\n")
+        self.display("# better results for you. As always, your mileage may vary.\n")
+        self.display("#\n")
+        for (name, uri) in printers :
+            self.display("[%s]\n" % name)
+            accounter = "software()"
+            try :
+                uri = uri.split("cupspykota:", 2)[-1]
+            except (ValueError, IndexError) :
+                pass
+            else :
+                while uri and uri.startswith("/") :
+                    uri = uri[1:]
+                try :
+                    (backend, destination) = uri.split(":", 1)
+                    if backend not in ("ipp", "http", "https", "lpd", "socket") :
+                        raise ValueError
+                except ValueError :
+                    pass
+                else :
+                    while destination.startswith("/") :
+                        destination = destination[1:]
+                    checkauth = destination.split("@", 1)
+                    if len(checkauth) == 2 :
+                        destination = checkauth[1]
+                    parts = destination.split("/")[0].split(":")
+                    if len(parts) == 2 :
+                        (hostname, port) = parts
+                        try :
+                            port = int(port)
+                        except ValueError :
+                            port = 9100
+                    else :
+                        (hostname, port) = parts[0], 9100
+
+                    if self.supportsSNMP(hostname, "public") :
+                        accounter = "hardware(snmp)"
+                    elif self.supportsPJL(hostname, 9100) :
+                        accounter = "hardware(pjl)"
+                    elif self.supportsPJL(hostname, 9101) :
+                        accounter = "hardware(pjl:9101)"
+                    elif self.supportsPJL(hostname, port) :
+                        accounter = "hardware(pjl:%s)" % port
+
+            self.display("preaccounter : software()\n")
+            self.display("accounter : %s\n" % accounter)
+            self.display("\n")
+        self.display("--- CUT ---\n")
+
+    def main(self, names, options) :
+        """Intializes PyKota's database."""
+        self.adminOnly()
+
+        if options.uidmin or options.uidmax :
+            if not options.dousers :
+                self.printInfo(_("The --uidmin or --uidmax command line option implies --dousers as well."), "warn")
+            options.dousers = True
+
+        if options.gidmin or options.gidmax :
+            if not options.dogroups :
+                self.printInfo(_("The --gidmin or --gidmax command line option implies --dogroups as well."), "warn")
+            options.dogroups = True
+
+        if options.dogroups :
+            if not options.dousers :
+                self.printInfo(_("The --dogroups command line option implies --dousers as well."), "warn")
+            options.dousers = True
+
+        if not names :
+            names = [u"*"]
+
+        self.printInfo(_("Please be patient..."))
+        dryrun = not options.force
+        if dryrun :
+            self.printInfo(_("Don't worry, the database WILL NOT BE MODIFIED."))
+        else :
+            self.printInfo(_("Please WORRY NOW, the database WILL BE MODIFIED."))
+
+        if options.dousers :
+            if not options.uidmin :
+                self.printInfo(_("System users will have a print account as well !"), "warn")
+                uidmin = 0
+            else :
+                try :
+                    uidmin = int(options.uidmin)
+                except :
+                    try :
+                        uidmin = pwd.getpwnam(options.uidmin).pw_uid
+                    except KeyError, msg :
+                        raise PyKotaCommandLineError, _("Unknown username %s : %s") \
+                                                   % (options.uidmin, msg)
+
+            if not options.uidmax :
+                uidmax = sys.maxint
+            else :
+                try :
+                    uidmax = int(options.uidmax)
+                except :
+                    try :
+                        uidmax = pwd.getpwnam(options.uidmax).pw_uid
+                    except KeyError, msg :
+                        raise PyKotaCommandLineError, _("Unknown username %s : %s") \
+                                                   % (options.uidmax, msg)
+
+            if uidmin > uidmax :
+                (uidmin, uidmax) = (uidmax, uidmin)
+            users = self.listUsers(uidmin, uidmax)
+        else :
+            users = []
+
+        if options.dogroups :
+            if not options.gidmin :
+                self.printInfo(_("System groups will have a print account as well !"), "warn")
+                gidmin = 0
+            else :
+                try :
+                    gidmin = int(options.gidmin)
+                except :
+                    try :
+                        gidmin = grp.getgrnam(options.gidmin).gr_gid
+                    except KeyError, msg :
+                        raise PyKotaCommandLineError, _("Unknown groupname %s : %s") \
+                                                   % (options.gidmin, msg)
+
+            if not options.gidmax :
+                gidmax = sys.maxint
+            else :
+                try :
+                    gidmax = int(options.gidmax)
+                except :
+                    try :
+                        gidmax = grp.getgrnam(options.gidmax).gr_gid
+                    except KeyError, msg :
+                        raise PyKotaCommandLineError, _("Unknown groupname %s : %s") \
+                                                   % (options.gidmax, msg)
+
+            if gidmin > gidmax :
+                (gidmin, gidmax) = (gidmax, gidmin)
+            groups = self.listGroups(gidmin, gidmax, users)
+            if not options.emptygroups :
+                for (groupname, members) in groups.items() :
+                    if not members :
+                        del groups[groupname]
+        else :
+            groups = []
+
+        printers = self.listPrinters(names)
+        if printers :
+            self.createPrinters(printers, dryrun)
+            self.createUsers([entry[0] for entry in users], printers, dryrun)
+            self.createGroups(groups, printers, dryrun)
+
+        if dryrun :
+            self.printInfo(_("Simulation terminated."))
+        else :
+            self.printInfo(_("Database initialized !"))
+
+        if options.doconf :
+            self.hintConfig(printers)
+
+
+if __name__ == "__main__" :
+    parser = PyKotaOptionParser(description=_("A turn key tool for PyKota. When launched, this command will initialize PyKota's database with all existing print queues and some or all users. For now, no prices or limits are set, so printing is fully accounted for, but not limited. That's why you'll probably want to also use edpykota once the database has been initialized."),
+                                usage="pkturnkey [options] printer1 printer2 ... printerN")
+    parser.add_option("-c", "--doconf",
+                            action="store_true",
+                            dest="doconf",
+                            help=_("Try to autodetect the best print accounting settings for existing CUPS printers. All printers must be switched ON beforehand."))
+    parser.add_option("-d", "--dousers",
+                            action="store_true",
+                            dest="dousers",
+                            help=_("Create accounts for users, and allocate print quota entries for them."))
+    parser.add_option("-D", "--dogroups",
+                            action="store_true",
+                            dest="dogroups",
+                            help=_("Create accounts for users groups, and allocate print quota entries for them."))
+    parser.add_option("-e", "--emptygroups",
+                            action="store_true",
+                            dest="emptygroups",
+                            help=_("Also include groups which don't have any member."))
+    parser.add_option("-f", "--force",
+                            action="store_true",
+                            dest="force",
+                            help=_("Modifies PyKota's database content for real, instead of faking it (for safety reasons)."))
+    parser.add_option("-u", "--uidmin",
+                            dest="uidmin",
+                            help=_("Only include users whose uid is greater than or equal to this parameter. If you pass an username instead, his uid will be used automatically."))
+    parser.add_option("-U", "--uidmax",
+                            dest="uidmax",
+                            help=_("Only include users whose uid is lesser than or equal to this parameter. If you pass an username instead, his uid will be used automatically."))
+    parser.add_option("-g", "--gidmin",
+                            dest="gidmin",
+                            help=_("Only include users groups whose gid is greater than or equal to this parameter. If you pass a groupname instead, its gid will be used automatically."))
+    parser.add_option("-G", "--gidmax",
+                            dest="gidmax",
+                            help=_("Only include users groups whose gid is lesser than or equal to this parameter. If you pass a groupname instead, its gid will be used automatically."))
+
+    parser.add_example("--dousers --uidmin jerome HPLASER1 HPLASER2",
+                       _("Would simulate the creation in PyKota's database of the printing accounts for all users whose uid is greater than or equal to 'jerome''s. Each of them would be given a print quota entry on printers 'HPLASER1' and 'HPLASER2'."))
+    parser.add_example("--force --dousers --uidmin jerome HPLASER1 HPLASER2",
+                       _("Would do the same as the example above, but for real. Please take great care when using the --force command line option."))
+    parser.add_example("--doconf",
+                       _("Would try to automatically detect the best print accounting settings for all active printers, and generate some lines for you to add into your pykota.conf"))
+    run(parser, PKTurnKey)

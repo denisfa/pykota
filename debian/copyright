@@ -1,7 +1,13 @@
-# $Id: LICENSE 3561 2013-01-04 22:34:24Z jerome $
+This package was debianized by Peter Hawkins <peterh@debian.org> on
+Tue, 18 Nov 2003 14:47:59 +1100.
 
-PyKota - Print Quotas for CUPS
+It was downloaded from:
+http://www.pykota.com/software/pykota/download
+(SVN snapshot)
 
+Upstream Authors: Jerome Alet <alet@librelogiciel.com>
+
+Copyright:
 (c) 2003-2013 Jerome Alet <alet@librelogiciel.com>
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,6 +22,14 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+The file LICENSE in the source tree contains the instructions which are
+included below.
+The author's wishes do not make the software DFSG non-free, since the
+official/non-official distinction is a request, not a requirement. That said,
+the debian package complies with the author's wishes and is labelled as
+unofficial; I encourage you to support free software and buy an official
+version if pykota turns out to be useful for you.
+
 ============================================================
 
 Licensing information :
@@ -27,29 +41,17 @@ Licensing information :
   * You can access to PyKota's latest development tree by using
     SubVersion (aka SVN) :
 
-      $ svn co http://svn.pykota.com/pykota/trunk pykota
+      $ svn co svn://svn.pykota.com/pykota/trunk pykota
 
-  * You are encouraged to support the project by purchasing an
-    unlimited entry pass to the restricted areas of http://www.pykota.com
-    or a Technical Support contract.
-
-    This gives you access to all the OFFICIAL packages : tar+gzip, Debian,
-    Ubuntu, RPMs, etc... depending on the application, that you can
-    redistribute if you want.
-
-    IMPORTANT : if you redistribute an OFFICIAL package in modified form,
-    PLEASE edit pykota/version.py to remove the word OFFICIAL from
-    the version number. If you redistribute an OFFICIAL package in
-    an unmodified form, then no problem.
+  * You are encouraged to support the project by purchasing unlimited
+    entry passes to 'OFFICIAL' packages, or Technical Support contracts.
 
   * I ask you to not label or present a version of PyKota downloaded
-    from SVN as being the 'OFFICIAL' one. OFFICIAL packages are
-    reasonably stable and well tested before shipping, while the
-    latest development tree as extracted from subversion may contain
-    bugs and/or incomplete functionnalities.
+    from SVN as being the 'OFFICIAL' one.
 
   * For more informations, please read :
 
         http://www.pykota.com/purchase
         http://www.pykota.com/technical-support
+	http://trac.pykota.com
 
