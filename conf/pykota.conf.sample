@@ -133,6 +133,15 @@ storageuserpw : readonlypw
 #storageuser: cn=pykotauser,dc=example,dc=com
 #storageuserpw: ls88DT5j
 
+# The following options enable the pykota's user to access
+# a kerberos keytab to authenticate against the LDAP server.
+# Requires kerberized slapd and readable keytab to pykota user.
+# If you enable these options, you do not need to set the password
+# for this user.
+#
+# storageusermechanism: GSSAPI
+# storageuserkeytab: /etc/pykota/pykotauser.keytab
+# storageuserprincipal: pykotauser
 
 
 # TLS support for LDAP

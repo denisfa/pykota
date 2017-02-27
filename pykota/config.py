@@ -104,10 +104,23 @@ class PyKotaConfig :
                 backendinfo[option] = None
         else :
             issqlite = False
-            for option in ["storageserver", "storagename", "storageuser"] :
+            for option in ["storageserver", "storagename", "storageuser","storageusermechanism","storageuserkeytab","storageuserprincipal"] :
                 backendinfo[option] = self.getGlobalOption(option)
             backendinfo["storageuserpw"] = self.getGlobalOption("storageuserpw", ignore=True)  # password is optional
-
+        #
+        if "storageusermechanism" in backendinfo :
+            if backendinfo["storageusermechanism"].upper() in ["GSSAPI"]:                
+                if "storageuserkeytab" in backendinfo :
+                    if os.access(backendinfo["storageuserkeytab"], os.R_OK) :
+                        if not "storageuserprincipal" in backendinfo:
+                            raise PyKotaConfigError, _("Option storageuserprincipal not set.")
+                    else:
+                        raise PyKotaConfigError, _("Keytab file '%s' is not readable.") % repr(backendinfo["storageuserkeytab"])
+                else:
+                    raise PyKotaConfigError, _("Option storageusermechanism is set, but keytab '%s' is not set.") % repr(backendinfo["storageuserkeytab"])
+            else:
+                raise PyKotaConfigError, _("Unknown '%s' value for storageusermechanism.") % backendinfo["storageusermechanism"]
+        #
         backendinfo["storageadmin"] = None
         backendinfo["storageadminpw"] = None
         if self.isAdmin :
@@ -123,6 +136,18 @@ class PyKotaConfig :
                     backendinfo["storageadminpw"] = adminconf.get("global", "storageadminpw", raw=1).decode(self.config_charset)
                 except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) :
                     pass # Password is optional
+                try:
+                    backendinfo["storageadminmechanism"] = adminconf.get("global", "storageadminmechanism", raw=1).decode(self.config_charset)
+                except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) :
+                    pass # Optional
+                try:
+                    backendinfo["storageadminkeytab"] = adminconf.get("global", "storageadminkeytab", raw=1).decode(self.config_charset)
+                except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) :
+                    pass # Optional
+                try:
+                    backendinfo["storageadminprincipal"] = adminconf.get("global", "storageadminprincipal", raw=1).decode(self.config_charset)
+                except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) :
+                    pass # Optional
                 # Now try to overwrite the storagebackend, storageserver
                 # and storagename. This allows admins to use the master LDAP
                 # server directly and users to use the replicas transparently.
@@ -138,6 +163,20 @@ class PyKotaConfig :
                     backendinfo["storagename"] = adminconf.get("global", "storagename", raw=1).decode(self.config_charset)
                 except ConfigParser.NoOptionError :
                     pass
+                #
+                if "storageadminmechanism" in backendinfo :
+                    if backendinfo["storageadminmechanism"].upper() in ["GSSAPI"]:
+                        if "storageadminkeytab" in backendinfo :
+                            if os.access(backendinfo["storageadminkeytab"], os.R_OK) :
+                                if not "storageadminprincipal" in backendinfo:
+                                    raise PyKotaConfigError, _("Option storageadminprincipal not set.")
+                            else:
+                                raise PyKotaConfigError, _("Keytab file '%s' is not readable.") % repr(backendinfo["storageuserkeytab"])
+                        else:
+                            raise PyKotaConfigError, _("Option storageadminkeytab is set, but keytab '%s' is not set.") % repr(backendinfo["storageadminkeytab"])
+                    else:
+                        raise PyKotaConfigError, _("Unknown '%s' value for storageadminmechanism.") % backendinfo["storageadminmechanism"]
+                #
         return backendinfo
 
     def getLDAPInfo(self) :

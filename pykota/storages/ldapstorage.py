@@ -47,6 +47,7 @@ from pykota.utils import *
 try :
     import ldap
     import ldap.modlist
+    import ldap.sasl
 except ImportError :
     raise PyKotaStorageError, "This python version (%s) doesn't seem to have the python-ldap module installed correctly." % sys.version.split()[0]
 else :
@@ -85,7 +86,18 @@ class Storage(BaseStorage) :
                     ldap.set_option(ldap.OPT_X_TLS_CACERTFILE, self.info["cacert"])
                     self.database.set_option(ldap.OPT_X_TLS, ldap.OPT_X_TLS_DEMAND)
                     self.database.start_tls_s()
-                self.database.simple_bind_s(self.saveduser, self.savedpasswd)
+                #
+                # Get info about GSSAPI authentication.
+                backendinfo = pykotatool.config.getStorageBackend()
+                authentication_mechanism = backendinfo["storageadminmechanism"] or backendinfo["storageusermechanism"]
+                # GSSAPI
+                if authentication_mechanism.upper() == "GSSAPI":
+                    auth = ldap.sasl.gssapi("")
+                    self.database.sasl_interactive_bind_s ("", auth)
+                # Default authentication.
+                else:
+                    self.database.simple_bind_s(self.saveduser, self.savedpasswd)
+                #
                 self.basedn = self.saveddbname
             except ldap.SERVER_DOWN :
                 message = "LDAP backend for PyKota seems to be down !"

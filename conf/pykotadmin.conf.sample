@@ -76,3 +76,13 @@ storageadminpw : readwritepw
 # storageadmin: cn=pykotaadmin,dc=example,dc=com
 # storageadminpw: BlfUPg7t
 
+# The following options enable the pykota's admin to use
+# a kerberos keytab to authenticate against the LDAP server.
+# Requires kerberized slapd and readable keytab to pykota user.
+# If you enable these options, you do not need to set the password
+# for this user.
+#
+# storageadminmechanism: GSSAPI
+# storageadminkeytab: /etc/pykota/pykotaadmin.keytab
+# storageadminprincipal: pykotaadmin
+

@@ -24,6 +24,7 @@
 
 import os
 import imp
+import subprocess
 from mx import DateTime
 
 from pykota.errors import PyKotaStorageError
@@ -828,6 +829,35 @@ class BaseStorage :
 
         return (start, end)
 
+
+def which (program):
+    """ Find full path of executable 'program'. """
+    def is_exe(fpath):
+        return os.path.isfile (fpath) and os.access (fpath, os.X_OK)
+    fpath, fname = os.path.split (program)
+    if fpath:
+        if is_exe (program):
+            return program
+    else:
+        for path in os.environ["PATH"].split(os.pathsep):
+            path = path.strip('"')
+            exe_file = os.path.join (path, program)
+            if is_exe (exe_file):
+                return exe_file
+    return None
+
+def preAuthenticationKerberos (backendinfo):
+    """Get a Kerberos V ticket for GSSAPI mechanism
+    and make it available to session."""
+    keytab = backendinfo["storageadminkeytab"] or backendinfo["storageuserkeytab"]
+    principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
+    kinit = which ('kinit')
+    if None == kinit:
+        raise OSError, _("command 'kinit' not available. Check kerberos installation.")
+    if subprocess.call ([kinit, '-k', '-t', keytab, principal]) != 0:
+        raise OSError, _("Check keytab '%s' with 'klist -k' and option principal '%s'") % (keytab, principal)
+
+
 def openConnection(pykotatool) :
     """Returns a connection handle to the appropriate database."""
     backendinfo = pykotatool.config.getStorageBackend()
@@ -844,5 +874,9 @@ def openConnection(pykotatool) :
         database = backendinfo["storagename"]
         admin = backendinfo["storageadmin"] or backendinfo["storageuser"]
         adminpw = backendinfo["storageadminpw"] or backendinfo["storageuserpw"]
+        #
+        authentication_mechanism = backendinfo["storageadminmechanism"] or backendinfo["storageusermechanism"]
+        if authentication_mechanism.upper() == "GSSAPI": preAuthenticationKerberos (backendinfo)
+        #
         return storagebackend.Storage(pykotatool, host, database, admin, adminpw)
 
