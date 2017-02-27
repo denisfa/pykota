@@ -88,7 +88,7 @@ class Storage(BaseStorage) :
                     self.database.start_tls_s()
                 #
                 # Get info about GSSAPI authentication.
-                backendinfo = pykotatool.config.getStorageBackend()
+                backendinfo = self.savedtool.config.getStorageBackend()
                 authentication_mechanism = backendinfo["storageadminmechanism"] or backendinfo["storageusermechanism"]
                 # GSSAPI
                 if authentication_mechanism.upper() == "GSSAPI":
