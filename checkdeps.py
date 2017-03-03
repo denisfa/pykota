@@ -79,6 +79,7 @@ if __name__ == "__main__" :
                        ("Python-pkpgcounter", "pkpgpdls", "Python-pkpgcounter is mandatory.\nGrab it from http://www.pykota.com/software/pkpgcounter/ or use 'apt-get install pkpgcounter'"),
                        ("Python-PAM", "PAM", "Python-PAM is recommended if you plan to use pknotify+PyKotIcon.\nGrab it from http://www.pangalactic.org/PyPAM/ or use 'apt-get install python-pam'"),
                        ("Python-pkipplib", "pkipplib", "Python-pkipplib is now mandatory.\nGrab it from http://www.pykota.com/software/pkipplib/"),
+                       ("Python-gssapi", "gssapi", "Python-gssapi is required if you plan to use Kerberos authentication.")
                      ]
     commandstocheck = [ ("GhostScript", "gs", "GhostScript may be needed in different parts of PyKota. Install it from your favorite distribution, or use 'apt-get install ghostscript'."),
                         ("Netatalk", "pap", "Netatalk is needed if you want to use hardware accounting with AppleTalk enabled printers. Install it from your favorite distribution or use 'apt-get install netatalk'")
