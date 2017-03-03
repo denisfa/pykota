@@ -853,7 +853,7 @@ def preAuthenticationKerberos (backendinfo):
     and make it available to session."""
     keytab = backendinfo["storageadminkeytab"] or backendinfo["storageuserkeytab"]
     principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
-    ccache_name = '/tmp/krb55cc_%s' % (principal)    
+    ccache_name = '/tmp/krb5cc_%s' % (principal)    
     try:
         name = gssapi.Name (principal, gssapi.NameType.kerberos_principal)
         store = {'ccache': ccache_name,'client_keytab': keytab}

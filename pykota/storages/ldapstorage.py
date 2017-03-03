@@ -96,7 +96,7 @@ class Storage(BaseStorage) :
                 if authentication_mechanism.upper() == "GSSAPI":
                     auth = ldap.sasl.gssapi("")
                     original_krb5ccname = os.environ.get ('KRB5CCNAME')
-                    os.environ['KRB5CCNAME'] = '/tmp/krb55cc_%s' % (principal)
+                    os.environ['KRB5CCNAME'] = '/tmp/krb5cc_%s' % (principal)
                     self.database.sasl_interactive_bind_s ("", auth)
                     if not original_krb5ccname:
                         del os.environ['KRB5CCNAME']
