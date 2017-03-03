@@ -90,10 +90,18 @@ class Storage(BaseStorage) :
                 # Get info about GSSAPI authentication.
                 backendinfo = self.savedtool.config.getStorageBackend()
                 authentication_mechanism = backendinfo["storageadminmechanism"] or backendinfo["storageusermechanism"]
+                principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
+                original_krb5ccname = None
                 # GSSAPI
                 if authentication_mechanism.upper() == "GSSAPI":
                     auth = ldap.sasl.gssapi("")
+                    original_krb5ccname = os.environ.get ('KRB5CCNAME')
+                    os.environ['KRB5CCNAME'] = '/tmp/krb55cc_%s' % (principal)
                     self.database.sasl_interactive_bind_s ("", auth)
+                    if not original_krb5ccname:
+                        del os.environ['KRB5CCNAME']
+                    else:
+                        os.environ['KRB5CCNAME'] = original_krb5ccname
                 # Default authentication.
                 else:
                     self.database.simple_bind_s(self.saveduser, self.savedpasswd)

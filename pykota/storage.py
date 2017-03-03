@@ -22,6 +22,7 @@
 
 """This module is the database abstraction layer for PyKota."""
 
+import gssapi
 import os
 import imp
 import subprocess
@@ -846,16 +847,19 @@ def which (program):
                 return exe_file
     return None
 
+
 def preAuthenticationKerberos (backendinfo):
     """Get a Kerberos V ticket for GSSAPI mechanism
     and make it available to session."""
     keytab = backendinfo["storageadminkeytab"] or backendinfo["storageuserkeytab"]
     principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
-    kinit = which ('kinit')
-    if None == kinit:
-        raise OSError, _("command 'kinit' not available. Check kerberos installation.")
-    if subprocess.call ([kinit, '-k', '-t', keytab, principal]) != 0:
-        raise OSError, _("Check keytab '%s' with 'klist -k' and option principal '%s'") % (keytab, principal)
+    ccache_name = '/tmp/krb55cc_%s' % (principal)    
+    try:
+        name = gssapi.Name (principal, gssapi.NameType.kerberos_principal)
+        store = {'ccache': ccache_name,'client_keytab': keytab}
+        cred = gssapi.Credentials (name=name, store=store, usage='initiate')
+    except gssapi.exceptions.GSSError as e:
+        raise e
 
 
 def openConnection(pykotatool) :
