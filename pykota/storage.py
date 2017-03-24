@@ -831,36 +831,32 @@ class BaseStorage :
         return (start, end)
 
 
-def which (program):
-    """ Find full path of executable 'program'. """
-    def is_exe(fpath):
-        return os.path.isfile (fpath) and os.access (fpath, os.X_OK)
-    fpath, fname = os.path.split (program)
-    if fpath:
-        if is_exe (program):
-            return program
-    else:
-        for path in os.environ["PATH"].split(os.pathsep):
-            path = path.strip('"')
-            exe_file = os.path.join (path, program)
-            if is_exe (exe_file):
-                return exe_file
-    return None
-
-
-def preAuthenticationKerberos (backendinfo):
-    """Get a Kerberos V ticket for GSSAPI mechanism
-    and make it available to session."""
-    keytab = backendinfo["storageadminkeytab"] or backendinfo["storageuserkeytab"]
-    principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
-    ccache_name = '/tmp/krb5cc_%s' % (principal)    
-    try:
-        name = gssapi.Name (principal, gssapi.NameType.kerberos_principal)
-        store = {'ccache': ccache_name,'client_keytab': keytab}
-        cred = gssapi.Credentials (name=name, store=store, usage='initiate')
-    except gssapi.exceptions.GSSError as e:
-        raise e
-
+class GssapiAuthenticationBackend (object):
+    """ GSSAPI Authentication Backend. """
+    def __init__ (self, principal=None, keytab=None):
+        self.principal = principal
+        self.keytab = keytab
+        self.ccache_name = '/tmp/krb5cc_pykota_%s' % (principal)
+        if self.principal is not None and self.keytab is not None:
+            self.original_krb5ccname = os.environ.get ('KRB5CCNAME')
+            self.getKerberosTicket ()
+    
+    """ Get a Kerberos V ticket for GSSAPI mechanism and make it 
+        available to session. """
+    def getKerberosTicket (self):
+        os.environ['KRB5CCNAME'] = self.ccache_name
+        try:
+            name = gssapi.Name (self.principal, gssapi.NameType.kerberos_principal)
+            store = {'ccache': self.ccache_name,'client_keytab': self.keytab}
+            cred = gssapi.Credentials (name=name, store=store, usage='initiate')
+        except gssapi.exceptions.GSSError as e:
+            raise e
+    
+    def __exit__ (self, exc_type, exc_val, exc_tb):
+        if self.original_krb5ccname is None:
+            del os.environ['KRB5CCNAME']
+        else:
+            os.environ['KRB5CCNAME'] = self.original_krb5ccname
 
 def openConnection(pykotatool) :
     """Returns a connection handle to the appropriate database."""
@@ -878,9 +874,10 @@ def openConnection(pykotatool) :
         database = backendinfo["storagename"]
         admin = backendinfo["storageadmin"] or backendinfo["storageuser"]
         adminpw = backendinfo["storageadminpw"] or backendinfo["storageuserpw"]
-        #
-        authentication_mechanism = backendinfo["storageadminmechanism"] or backendinfo["storageusermechanism"]
-        if authentication_mechanism.upper() == "GSSAPI": preAuthenticationKerberos (backendinfo)
+        #       
+        principal = backendinfo["storageadminprincipal"] or backendinfo["storageuserprincipal"]
+        keytab = backendinfo["storageadminkeytab"] or backendinfo["storageuserkeytab"]
+        authentication_token = GssapiAuthenticationBackend (principal, keytab)
         #
         return storagebackend.Storage(pykotatool, host, database, admin, adminpw)
 
