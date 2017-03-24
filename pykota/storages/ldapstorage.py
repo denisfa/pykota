@@ -89,6 +89,7 @@ class Storage(BaseStorage) :
                 #
                 # Get info about GSSAPI authentication.
                 backendinfo = self.savedtool.config.getStorageBackend()
+                authentication_mechanism = backendinfo["storageusermechanism"]
                 if authentication_mechanism.upper() == "GSSAPI":
                     auth = ldap.sasl.gssapi ("")
                     self.database.sasl_interactive_bind_s ("", auth)
